@@ -1,0 +1,62 @@
+name: oficina-agua-infra
+
+# Base de datos del monolito (db-primary) y su replica de solo lectura (db-replica).
+# Los microservicios leen de la replica; el monolito escribe en la principal.
+# Las credenciales viven en .env (copiar de .env.example); .env no se sube a Git.
+
+services:
+  db-primary:
+    image: mariadb:11.4
+    container_name: db-primary
+    command: >
+      --log-bin --log-basename=mariadb --server-id=1
+      --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      # Solo para desarrollo local: el monolito se conecta como root sin contrasena,
+      # igual que con Laragon, asi su .env no cambia.
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
+      MARIADB_DATABASE: oficina_agua
+      MARIADB_REPLICATION_USER: ${DB_REPLICATION_USER}
+      MARIADB_REPLICATION_PASSWORD: ${DB_REPLICATION_PASSWORD}
+      DB_LECTURA_USER: ${DB_LECTURA_USER}
+      DB_LECTURA_PASSWORD: ${DB_LECTURA_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - db-primary-data:/var/lib/mysql
+      - ./db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 20s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-replica:
+    image: mariadb:11.4
+    container_name: db-replica
+    command: >
+      --server-id=2 --log-basename=mariadb --read-only=1
+      --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_REPLICA_ROOT_PASSWORD}
+      MARIADB_MASTER_HOST: db-primary
+      MARIADB_REPLICATION_USER: ${DB_REPLICATION_USER}
+      MARIADB_REPLICATION_PASSWORD: ${DB_REPLICATION_PASSWORD}
+      MARIADB_HEALTHCHECK_GRANTS: REPLICA MONITOR
+    ports:
+      - "3307:3306"
+    volumes:
+      - db-replica-data:/var/lib/mysql
+    depends_on:
+      db-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--replication_io", "--replication_sql", "--replication"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  db-primary-data:
+  db-replica-data:
