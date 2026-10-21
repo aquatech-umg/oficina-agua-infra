@@ -32,12 +32,12 @@ No se incluyen datos personales (clientes, contadores, lecturas, recibos, pagos 
 2. Si usas Laragon, detener su MySQL (ocupa el puerto 3306).
 3. Levantar:
 
-   ```bash
+```bash
    docker compose up -d
    docker compose ps
-   ```
+```
 
-   Los dos contenedores deben quedar en estado `healthy`. La réplica arranca hasta que la principal está lista.
+Los dos contenedores deben quedar en estado `healthy`. La réplica arranca hasta que la principal está lista.
 
 ## Conexiones
 
@@ -81,3 +81,50 @@ Borra los datos de ambas bases y las vuelve a crear desde `db/`:
 docker compose down -v
 docker compose up -d
 ```
+
+## Levantar todo el equipo con un comando (AQ-107)
+
+`docker-compose.equipo.yml` incluye el `docker-compose.yml` de cada repo y levanta juntos todos los
+servicios de infraestructura de la Fase 2. Cada repo sigue funcionando solo, como siempre.
+
+**Requisito:** los 5 repos clonados en la misma carpeta (por ejemplo `IdeaProjects`), cada uno con su `.env`
+copiado de su `.env.example`:
+
+```
+IdeaProjects/
+├── oficina-agua-infra          (este repo)
+├── oficina-agua-rag
+├── oficina-agua-pagos
+├── oficina-agua-replicacion
+└── oficina-agua-consulta
+```
+
+| Contenedor | Repo | Puerto |
+|---|---|---|
+| `db-primary` / `db-replica` | infra | 3306 / 3307 |
+| `rag-db` (Postgres + pgvector) | rag | 5433 |
+| `dynamodb-chat` | rag | 8010 |
+| `dynamodb-local` (replicación) | replicacion | 8011 (solo `127.0.0.1`) |
+| `dynamodb-pagos` | pagos | 8012 |
+| `pagos-rabbitmq` | pagos | 5672 (consola `http://localhost:15672`) |
+| `consulta-service` (solo con `--profile apps`) | consulta | 8082 |
+
+```bash
+docker compose -f docker-compose.equipo.yml up -d                  # bases, colas y NoSQL
+docker compose -f docker-compose.equipo.yml --profile apps up -d   # además consulta-service en Docker
+docker compose -f docker-compose.equipo.yml ps
+docker compose -f docker-compose.equipo.yml down                   # apaga todo (los datos se quedan)
+```
+
+Las tablas de DynamoDB se crean solas con los contenedores `*-init`, que terminan al acabar.
+
+Los servicios de la aplicación (rag-service, pagos-producer, pagos-consumer, sync-service y el web-bff)
+se siguen corriendo desde IntelliJ o `npm run dev`; ya encuentran todo en `localhost` con los puertos de la tabla.
+Ollama corre fuera de Docker, en la máquina con GPU.
+
+**Si antes usabas el compose de un repo por separado:** ejecutá `docker compose down` en ese repo (o
+`docker rm` de sus contenedores). Si solo los detenés, sus nombres siguen ocupados y el compose de equipo falla
+con `Conflict. The container name ... is already in use`.
+
+El proyecto de equipo se llama `aquatech`, así que sus volúmenes (`aquatech_*`) son distintos a los de cada repo:
+la primera vez las bases arrancan desde cero (el rag-service vuelve a vectorizar solo al arrancar).

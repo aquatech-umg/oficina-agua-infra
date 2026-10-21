@@ -1,0 +1,43 @@
+name: aquatech
+
+# Docker Compose de equipo (AQ-107): levanta con un solo comando todo lo que la Fase 2 necesita
+# para correr local. Incluye el docker-compose.yml de cada repo, que siguen funcionando solos.
+#
+# Requisito: los 5 repos clonados en la MISMA carpeta (por ejemplo IdeaProjects):
+#   oficina-agua-infra, oficina-agua-rag, oficina-agua-pagos, oficina-agua-replicacion, oficina-agua-consulta
+# Cada include lee el .env de su propio repo (copiar de su .env.example).
+#
+# Uso (desde oficina-agua-infra):
+#   docker compose -f docker-compose.equipo.yml up -d                  -> bases, colas y NoSQL
+#   docker compose -f docker-compose.equipo.yml --profile apps up -d   -> además consulta-service en Docker
+#   docker compose -f docker-compose.equipo.yml down                   -> apaga todo (los datos se quedan)
+#
+# Antes, apagar lo que esté levantado con el compose de cada repo: usan los mismos nombres y puertos.
+
+include:
+  # Monolito: db-primary :3306 y db-replica :3307 (solo lectura)
+  - path: docker-compose.yml
+  # Chatbot RAG: rag-db (pgvector) :5433 y dynamodb-chat :8010
+  - path: ../oficina-agua-rag/docker-compose.yml
+  # Pagos: RabbitMQ :5672 (consola :15672) y dynamodb-pagos :8012
+  - path: ../oficina-agua-pagos/docker-compose.yml
+  # Replicación a NoSQL: dynamodb-local :8011
+  - path: ../oficina-agua-replicacion/docker-compose.yml
+
+services:
+  # consulta-service dentro de Docker (es el mismo contenedor que se sube a ECS, AQ-131).
+  # Solo se levanta con --profile apps; si no, se corre desde IntelliJ como siempre.
+  consulta-service:
+    profiles: ["apps"]
+    build: ../oficina-agua-consulta/consulta-service
+    container_name: consulta-service
+    env_file: ../oficina-agua-consulta/.env
+    environment:
+      # Dentro de la red de Docker la réplica se llama db-replica y escucha en 3306
+      DB_HOST: db-replica
+      DB_PORT: "3306"
+    ports:
+      - "8082:8082"
+    depends_on:
+      db-replica:
+        condition: service_healthy
